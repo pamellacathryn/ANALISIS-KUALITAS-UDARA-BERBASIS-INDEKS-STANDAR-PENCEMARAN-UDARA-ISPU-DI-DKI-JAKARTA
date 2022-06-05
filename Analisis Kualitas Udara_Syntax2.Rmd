@@ -1,0 +1,203 @@
+---
+title: "DKI1"
+author: "Jeremy - 10820034"
+date: "4/13/2022"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library yang digunakan
+```{r message=FALSE, warning=FALSE}
+# Untuk membaca data dengan format csv
+library(readr)
+# Untuk membersihkan data
+library(tidyr)
+# Untuk mengubah data menjadi Time Series,
+# membuat plot ACF, plot PACF, Model ARIMA dan ADF Test
+library(tseries)
+# Untuk melihat signifikansi koefisien dari parameter
+library(lmtest)
+# Untuk memprediksi data dari model
+library(forecast)
+# Untuk melakukan uji heteroskedastik
+library(FinTS)
+```
+
+```{r message=FALSE, warning=FALSE}
+# Memanggil Data
+setwd("E:/Praktikum ADW")
+library(readr)
+data <- read_csv("ispu_stasiun.csv", 
+    col_types = cols(`bulan/tahun` = col_date(format = "%m/%Y"), 
+        `DKI 1` = col_number(), `DKI 2` = col_number(), 
+        `DKI 3` = col_number(), `DKI 4` = col_number()))
+# Membuat grafik data
+plot(data$`bulan/tahun`,data$`DKI 1`, type = 'l', main = 'Konsentrasi PM10 di Bunderan HI DKI Jakarta Tahun 2010-2021', xlab = "Tahun", ylab = "Konsentrasi PM10 (µgr/m^3)")
+# Membuat garis rataan
+abline(h=mean(data$`DKI 1`),lwd=2,
+lty = 2, col ='red')
+```
+
+```{r}
+summary(data$`DKI 1`)
+sd(data$`DKI 1`)
+```
+
+```{r}
+acf(data$`DKI 1`, lag = 48, main="Plot ACF Data")
+```
+
+Pada grafik ACF dapat dilihat bahwa nilai ACF setiap lag kelipatan 6 lebih tinggi dari yang lain sehingga akan diasumsikan bahwa data memiliki pola musiman dengan $s=6$
+
+```{r}
+# Membuat data menjadi time series
+ts_data <- ts(data$`DKI 1`, frequency = 6)
+#Plot per subseries
+ggsubseriesplot(ts_data)
+plot(decompose(ts_data))
+```
+
+Pada data terdapat 132 observasi yang berarti terdapat 11 tahun. Dengan demikian, jumlah observasi yang akan menjadi data train adalah sebanyak 0.8 $\times$ 11 tahun $\approx$ 9 tahun = 108 observasi dan sisa datanya akan menjadi data validation
+
+```{r}
+# Membuat data train dan validation dan mengubahnya menjadi data time series 
+pm10 <- ts(data$`DKI 1`)
+# data yang akan digunakan untuk membuat model
+pm10_train <- ts(pm10[1:108])
+# data yang akan digunakan untuk memvalidasi model
+pm10_validation <-ts(pm10[108:132])
+```
+ 
+## 2. Identifikasi Model
+
+```{r}
+# Membuat grafik data
+plot(pm10_train , type = 'l', main = 'Konsentrasi PM10  Data Train', ylab = "Konsentrasi PM10")
+# Membuat garis rataan
+abline(h=mean(pm10_train),lwd=2, lty = 2, col ='red')
+```
+
+```{r}
+adf.test(pm10_train)
+```
+
+Diperoleh nilai p-value = 0.01 < $\alpha = 0.05$ sehingga dapat disimpulkan bahwa data telah stasioner dalam rataan. sehingga akan dilakukan diferensiasi musiman
+
+```{r}
+pm10_train_diff <- diff(pm10_train, lag = 6)
+plot(pm10_train_diff,lwd = 2,main = 'Plot Data Diferensiasi Musiman', ylab="PM10 Train Diff")
+abline(h=mean(pm10_train_diff), lwd=2,lty = 2, col ='red')
+```
+
+```{r}
+adf.test(pm10_train_diff)
+```
+
+```{r}
+acf(pm10_train_diff, main = "Grafik ACF Data Diferensiasi Musiman", lag.max = 36)
+```
+
+```{r}
+pacf(pm10_train_diff, main = "Grafik PACF Data Diferensiasi Musiman", lag.max = 49)
+```
+
+Dari grafik-grafik tersebut dapat disimpulkan beberapa model yang akan dicoba, yaitu:
+1. $SARIMA(0,0,2)\times(1,1,0)_6$
+2. $SARIMA(1,0,0)\times(1,1,0)_6$
+3. $SARIMA(1,0,2)\times(1,1,0)_6$
+
+# 3. Penaksiran Parameter
+```{r}
+mod_1 <- arima(pm10_train, order = c(0,0,2), seasonal = list(order = c(1,1,0), period = 6),
+               method = 'ML')
+mod_1
+```
+
+```{r}
+mod_2 <- arima(pm10_train, order = c(1,0,0), seasonal = list(order = c(1,1,0), period = 6),
+               method = 'ML')
+mod_2
+```
+
+```{r}
+mod_3 <- arima(pm10_train, order = c(1,0,2), seasonal = list(order = c(1,1,0), period = 6),
+               method = 'ML')
+mod_3
+```
+
+
+```{r}
+mod_auto = auto.arima(pm10_train, max.p=4,max.q=4, max.P = 4, max.Q = 4,seasonal =TRUE, stationary = FALSE)
+mod_auto
+```
+
+Dapat dilihat bahwa model dengan AIC terkecil dimiliki oleh model $SARIMA(1,0,0)\times(1,1,0)_6$ sehingga akan dipilih model $SARIMA(1,0,0)\times(1,1,0)_6$ untuk dianalisis lebih lanjut. Berikutnya, akan dilakukan uji signifikansi dari model.
+
+
+## 4. Signifikansi dari Koefisien Parameter dan Pembuatan Model
+```{r}
+coeftest(mod_2)
+```
+
+Dapat dilihat bahwa semua parameter signifikan sehingga dapat disimpulkan bahwa model yang dipilih dapat digunakan untuk memodelkan data. Berikutnya, akan dilihat performa model.
+
+```{r}
+accuracy(mod_2)
+```
+
+Dapat dilihat bahwa RMSE dari model sebesar $8.876$ yang sangat kecil dibandingkan dengan standar deviasi data (= 10.021). Jadi, dapat disimpulkan bahwa model ini cocok digunakan untuk memodelkan data yang ada.
+
+## 5. Uji Diagnostik
+```{r}
+checkresiduals(mod_2)
+```
+
+Perhatikan bahwa p-value > $\alpha = 0.05$ sehingga dapat disimpulkan bahwa data saling bebas. Hal ini juga diperkuat dari plot ACF yang tidak signifikan. Dapat dilihat juga bahwa distribusi dari residual hampir menyerupai distribusi normal dan plot residual terlihat memiliki rataan nol dan variansi yang konstan.
+
+```{r}
+data_residuals <- residuals(mod_2)
+ks.test(residuals(mod_2), "pnorm", mean=mean(data_residuals), sd=sd(data_residuals))
+```
+Uji Kolmogorov-Smirnov dengan hipotesis:  
+$H_0:$ data berdistribusi normal  
+$H_1:$ data tidak berdistribusi normal  
+Diperoleh p-value = 0.1301 > $\alpha = 0.05$ maka $H_0$ tidak ditolak dan dapat disimpulkan bahwa residual model berdistribusi normal.
+
+```{r}
+ArchTest(data_residuals)
+```
+
+Karena p-value = $0.8267$ > $\alpha = 0.05$, dapat disimpulkan bahwa data tidak perlu dimodelkan dengan model heteroskedastik. Hal ini didukung pula oleh variansi galat yang terlihat konstan pada plot galat.
+
+## 5.1 Forecasting
+Sebelum dilakukan forecasting, akan dilihat terlebih dahulu performa model untuk memodelkan data validation terlebih dahulu.
+
+```{r}
+validation <- forecast(pm10_train,model=mod_2,h=length(pm10_validation))
+actual <- as.vector(pm10_validation)
+rmse_validation <- sqrt(mean((as.vector(validation$mean)-actual)^2))
+rmse_validation
+```
+Dapat dilihat bahwa RMSE dari model $\approx 8.714$ yang lebih kecil daripada RMSE yang diperoleh sebelumnya. Dengan demikian, dapat disimpulkan bahwa model yang dipilih dapat digunakan untuk memprediksi data.
+
+```{r}
+ape_validation <- abs((as.vector(validation$mean) -actual)/actual)*100
+mape_validation <- mean(ape_validation)
+mape_validation
+```
+
+Diperoleh juga MAPE sebesar $\approx 15.215%$
+
+```{r}
+fc <- forecast(pm10,model=mod_2, h=24)
+summary(fc)
+```
+
+```{r}
+plot(forecast(mod_2, h=24, level=c(80,95)), xaxt='n',ylab="Konsentrasi PM10 (µgr/m^3)", xlab="Bulan/Tahun", main="Forecast SARIMA(1,0,0)(1,1,0)[6] untuk Konsentrasi PM10 di Bunderan HI", asp=0.6)
+axis(1, at=seq(1, 140,10), labels=format(seq(as.Date("2010/1/1"), by = "year", length.out = 14),format("%b %Y")), cex.axis=0.8, xpd=TRUE)
+```
+
